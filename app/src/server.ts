@@ -66,7 +66,12 @@ const DEBATE_TOPICS: string[] = [
   "Should you put milk or cereal first?",
   "Are video games a sport?",
   "Is time travel possible?",
-  "Should robots have rights?"
+  "Should robots have rights?",
+  "Is social media good or bad for society?",
+  "Should we colonize Mars?",
+  "Is artificial intelligence a threat to humanity?",
+  "Should college be free?",
+  "Is remote work better than office work?"
 ];
 
 function getRandomTopic(): string {
@@ -165,7 +170,8 @@ io.on('connection', (socket) => {
 
     if (!text || text.trim().length === 0 || text.length > 500) return;
 
-    io.to(roomId).emit('msg', {
+    // FIXED: Only send to other users in room, not back to sender
+    socket.to(roomId).emit('msg', {
       from: socket.id,
       text: text.trim(),
       timestamp: Date.now()
@@ -219,86 +225,33 @@ function endRoom(roomId: string, reason: string): void {
   logger.info(`Room ${roomId} ended: ${reason}`);
 }
 
-// API endpoints
+// API endpoints - all built-in
 app.get('/api/stats', (req: express.Request, res: express.Response) => {
   res.json({
     activeRooms: activeRooms.size,
     waitingUsers: waitingUsers.size,
     totalConnections: io.sockets.sockets.size,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime()
   });
 });
 
 app.get('/api/topics', (req: express.Request, res: express.Response) => {
-  res.json({ topics: DEBATE_TOPICS });
+  res.json({ topics: DEBATE_TOPICS, count: DEBATE_TOPICS.length });
 });
 
 app.get('/health', (req: express.Request, res: express.Response) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    uptime: process.uptime(),
+    mode: 'memory-only'
   });
 });
 
-// Serve static files - try multiple paths for Render compatibility
-const staticPaths = [
-  path.join(__dirname, '../'),
-  path.join(__dirname, '../../'),
-  path.join(__dirname, '../public'),
-  path.join(__dirname, '../../public'),
-  __dirname,
-  path.join(process.cwd(), 'app'),
-  process.cwd()
-];
-
-staticPaths.forEach(staticPath => {
-  app.use(express.static(staticPath));
-  logger.info(`Added static path: ${staticPath}`);
-});
-
-// Root route with embedded HTML as fallback
+// MAIN ROUTE - Complete embedded HTML with improved UI
 app.get('/', (req: express.Request, res: express.Response) => {
-  const possiblePaths = [
-    path.join(__dirname, '../index.html'),
-    path.join(__dirname, '../../index.html'),
-    path.join(__dirname, '../public/index.html'),
-    path.join(__dirname, '../../public/index.html'),
-    path.join(__dirname, 'index.html'),
-    path.join(process.cwd(), 'app/index.html'),
-    path.join(process.cwd(), 'index.html')
-  ];
-
-  logger.info(`Trying to serve index.html from paths: ${possiblePaths.join(', ')}`);
-
-  // Try each path
-  const tryNextPath = (index: number): void => {
-    if (index >= possiblePaths.length) {
-      // If no file found, serve embedded HTML
-      logger.warn('No index.html found, serving embedded HTML');
-      res.send(getEmbeddedHTML());
-      return;
-    }
-
-    const currentPath = possiblePaths[index];
-    logger.info(`Trying path: ${currentPath}`);
-
-    res.sendFile(currentPath, (err?: Error) => {
-      if (err) {
-        logger.warn(`Failed to serve from ${currentPath}:`, err.message);
-        tryNextPath(index + 1);
-      } else {
-        logger.info(`Successfully served from ${currentPath}`);
-      }
-    });
-  };
-
-  tryNextPath(0);
-});
-
-// Embedded HTML as ultimate fallback
-function getEmbeddedHTML(): string {
-  return `<!DOCTYPE html>
+  res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -309,74 +262,205 @@ function getEmbeddedHTML(): string {
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             background: linear-gradient(135deg, #0f0f0f, #1a1a1a);
-            color: #eee;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            padding: 10px;
+            color: #eee; margin: 0; padding: 10px;
+            min-height: 100vh; display: flex; flex-direction: column;
         }
-        #app {
-            width: 100%;
-            max-width: 650px;
-            background: #1c1c1c;
-            padding: 25px;
-            border-radius: 15px;
+
+        /* Header with stats */
+        .header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 15px 20px; background: rgba(28, 28, 28, 0.9);
+            border-radius: 10px; margin-bottom: 15px;
+            backdrop-filter: blur(10px);
+        }
+
+        .header h1 {
+            margin: 0; font-size: 1.8em; color: #4db6ff;
+            display: flex; align-items: center; gap: 10px;
+        }
+
+        .stats-box {
+            background: rgba(77, 182, 255, 0.1);
+            border: 1px solid rgba(77, 182, 255, 0.3);
+            border-radius: 8px; padding: 10px 15px;
+            font-size: 0.9em; color: #4db6ff;
+            min-width: 200px; text-align: right;
+        }
+
+        .stats-item {
+            display: block; margin: 2px 0;
+        }
+
+        /* Main container */
+        .container {
+            display: flex; gap: 15px; flex: 1;
+            max-width: 1200px; margin: 0 auto; width: 100%;
+        }
+
+        /* Chat area */
+        .chat-area {
+            flex: 1; background: #1c1c1c;
+            border-radius: 15px; padding: 20px;
             box-shadow: 0 10px 30px rgba(0,0,0,0.7);
-            border: 1px solid #333;
+            border: 1px solid #333; display: flex; flex-direction: column;
         }
-        h1 { text-align: center; margin: 0 0 10px 0; color: #fff; font-size: 2.2em; }
-        #controls, #inputArea { display: flex; gap: 10px; margin: 15px 0; flex-wrap: wrap; }
-        #controls input, #inputArea input { flex: 1; min-width: 200px; }
-        input[type="text"] {
-            padding: 12px; border: 1px solid #444; border-radius: 8px;
+
+        #topic {
+            text-align: center; margin: 0 0 15px 0; font-weight: bold;
+            font-size: 1.1em; color: #4db6ff; padding: 12px;
+            background: rgba(77, 182, 255, 0.1); border-radius: 8px;
+            border: 1px solid rgba(77, 182, 255, 0.3);
+            min-height: 45px; display: flex; align-items: center; justify-content: center;
+        }
+
+        #chat {
+            background: #222; padding: 15px; height: 400px; overflow-y: auto;
+            border-radius: 10px; margin-bottom: 15px; border: 1px solid #333;
+            font-family: 'SF Mono', Monaco, 'Cascadia Code', monospace; line-height: 1.5;
+            flex: 1;
+        }
+
+        .msg { 
+            margin: 8px 0; padding: 8px 12px; border-radius: 8px; 
+            word-wrap: break-word; animation: slideIn 0.2s ease;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        .msg.me { 
+            color: #4db6ff; background: rgba(77, 182, 255, 0.15);
+            border-left: 3px solid #4db6ff; margin-left: 20px;
+        }
+
+        .msg.other { 
+            color: #ff7a7a; background: rgba(255, 122, 122, 0.15);
+            border-left: 3px solid #ff7a7a; margin-right: 20px;
+        }
+
+        .msg.system { 
+            color: #aaa; font-style: italic; text-align: center;
+            background: rgba(170, 170, 170, 0.05); border-radius: 20px;
+            font-size: 0.9em; margin: 10px 0;
+        }
+
+        /* Input area */
+        #inputArea {
+            display: flex; gap: 10px; margin-bottom: 15px;
+        }
+
+        #inputArea input {
+            flex: 1; padding: 12px; border: 1px solid #444;
+            border-radius: 8px; background: #2a2a2a; color: #eee;
+            font-size: 14px; transition: all 0.2s;
+        }
+
+        #inputArea input:focus {
+            outline: none; border-color: #4db6ff; background: #333;
+            box-shadow: 0 0 0 2px rgba(77, 182, 255, 0.2);
+        }
+
+        /* Controls */
+        #controls {
+            display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+        }
+
+        #controls input {
+            flex: 1; min-width: 200px; padding: 12px;
+            border: 1px solid #444; border-radius: 8px;
             background: #2a2a2a; color: #eee; font-size: 14px;
         }
-        input[type="text"]:focus { outline: none; border-color: #4db6ff; background: #333; }
+
         button {
-            padding: 12px 18px; border: none; border-radius: 8px; background: #4db6ff;
-            color: white; cursor: pointer; font-weight: 600; font-size: 14px;
-            transition: all 0.2s ease;
+            padding: 12px 20px; border: none; border-radius: 8px;
+            background: #4db6ff; color: white; cursor: pointer;
+            font-weight: 600; font-size: 14px; transition: all 0.2s ease;
+            white-space: nowrap;
         }
-        button:hover:not(:disabled) { background: #3da8ef; transform: translateY(-1px); }
-        button:disabled { background: #555; color: #999; cursor: not-allowed; transform: none; }
+
+        button:hover:not(:disabled) {
+            background: #3da8ef; transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(77, 182, 255, 0.3);
+        }
+
+        button:disabled {
+            background: #555; color: #999; cursor: not-allowed;
+            transform: none; box-shadow: none;
+        }
+
         #skipBtn { background: #ff9500; }
         #skipBtn:hover:not(:disabled) { background: #e6850e; }
+
         #endBtn { background: #ff4757; }
         #endBtn:hover:not(:disabled) { background: #e73c4e; }
-        #chat {
-            background: #222; padding: 15px; height: 350px; overflow-y: auto;
-            border-radius: 10px; margin-bottom: 15px; border: 1px solid #333;
-            font-family: monospace; line-height: 1.4;
+
+        /* Scrollbar styling */
+        #chat::-webkit-scrollbar { width: 8px; }
+        #chat::-webkit-scrollbar-track { background: #1a1a1a; border-radius: 4px; }
+        #chat::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
+        #chat::-webkit-scrollbar-thumb:hover { background: #666; }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .container { flex-direction: column; }
+            .header { flex-direction: column; gap: 10px; text-align: center; }
+            .stats-box { min-width: auto; text-align: center; }
+            #controls { flex-direction: column; }
+            #controls input { min-width: auto; }
+            #chat { height: 300px; }
         }
-        .msg { margin: 8px 0; padding: 6px 10px; border-radius: 6px; word-wrap: break-word; }
-        .msg.me { color: #4db6ff; background: rgba(77, 182, 255, 0.1); border-left: 3px solid #4db6ff; }
-        .msg.other { color: #ff7a7a; background: rgba(255, 122, 122, 0.1); border-left: 3px solid #ff7a7a; }
-        .msg.system { color: #aaa; font-style: italic; text-align: center; background: rgba(170, 170, 170, 0.05); border-radius: 20px; }
-        #topic { text-align: center; margin: 15px 0; font-weight: bold; font-size: 1.1em; color: #4db6ff; padding: 12px; background: rgba(77, 182, 255, 0.1); border-radius: 8px; border: 1px solid rgba(77, 182, 255, 0.3); }
+
+        /* Status indicator */
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #4db6ff; margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Typing indicator */
+        .typing-indicator {
+            display: none; color: #aaa; font-style: italic;
+            padding: 5px 12px; font-size: 0.9em;
+        }
     </style>
 </head>
 <body>
-    <div id="app">
-        <h1>🗣️ Debate Omegle</h1>
-        <p style="text-align: center; color: #aaa; margin-bottom: 20px;">Connect with strangers for random debates on interesting topics!</p>
-        <div id="topic"></div>
-        <div id="chat"></div>
-        <div id="inputArea">
-            <input type="text" id="messageBox" placeholder="Type your argument..." disabled>
-            <button id="sendBtn" disabled>Send</button>
-        </div>
-        <div id="controls">
-            <input type="text" id="tags" placeholder="Enter interests (optional): cats, politics, sports">
-            <button id="startBtn">Find Debate Partner</button>
-            <button id="skipBtn" disabled>Skip</button>
-            <button id="endBtn" disabled>End Debate</button>
-        </div>
-        <div style="text-align: center; margin-top: 15px; color: #666; font-size: 12px;">
-            <p>🔥 <span id="stats">Loading...</span> • Be respectful and have fun!</p>
+    <div class="header">
+        <h1><span class="status-dot"></span>🗣️ Debate Omegle</h1>
+        <div class="stats-box">
+            <div class="stats-item">👥 <span id="online">0</span> online</div>
+            <div class="stats-item">🗣️ <span id="debates">0</span> debates</div>
+            <div class="stats-item">⏳ <span id="waiting">0</span> waiting</div>
         </div>
     </div>
+
+    <div class="container">
+        <div class="chat-area">
+            <div id="topic">Connect with strangers for random debates on interesting topics!</div>
+            <div id="chat"></div>
+            <div class="typing-indicator" id="typingIndicator">Opponent is typing...</div>
+
+            <div id="inputArea">
+                <input type="text" id="messageBox" placeholder="Type your argument..." disabled maxlength="500">
+                <button id="sendBtn" disabled>Send</button>
+            </div>
+
+            <div id="controls">
+                <input type="text" id="tags" placeholder="Enter interests: cats, politics, sports, gaming..." maxlength="100">
+                <button id="startBtn">Find Debate Partner</button>
+                <button id="skipBtn" disabled>Skip Partner</button>
+                <button id="endBtn" disabled>End Debate</button>
+            </div>
+        </div>
+    </div>
+
     <script src="/socket.io/socket.io.js"></script>
     <script>
         const socket = io({transports: ['websocket', 'polling']});
@@ -387,8 +471,11 @@ function getEmbeddedHTML(): string {
         const startBtn = document.getElementById('startBtn');
         const skipBtn = document.getElementById('skipBtn');
         const endBtn = document.getElementById('endBtn');
-        const statsEl = document.getElementById('stats');
+        const onlineEl = document.getElementById('online');
+        const debatesEl = document.getElementById('debates');
+        const waitingEl = document.getElementById('waiting');
         let currentRoom = null;
+        let typingTimeout = null;
 
         function addMessage(text, type = 'system') {
             const msgDiv = document.createElement('div');
@@ -399,45 +486,59 @@ function getEmbeddedHTML(): string {
         }
 
         function resetUI() {
-            startBtn.disabled = false;
-            skipBtn.disabled = true;
-            endBtn.disabled = true;
-            msgBox.disabled = true;
-            sendBtn.disabled = true;
-            currentRoom = null;
+            startBtn.disabled = false; startBtn.textContent = 'Find Debate Partner';
+            skipBtn.disabled = true; endBtn.disabled = true;
+            msgBox.disabled = true; sendBtn.disabled = true; currentRoom = null;
+        }
+
+        function updateStats() {
+            fetch('/api/stats')
+                .then(res => res.json())
+                .then(data => {
+                    onlineEl.textContent = data.totalConnections;
+                    debatesEl.textContent = data.activeRooms;
+                    waitingEl.textContent = data.waitingUsers;
+                })
+                .catch(err => {
+                    console.log('Stats update failed:', err);
+                });
         }
 
         startBtn.onclick = () => {
-            const tags = document.getElementById('tags').value.split(',').map(t => t.trim()).filter(Boolean);
-            socket.emit('find', { tags });
-            addMessage('🔎 Searching for a partner...', 'system');
-            startBtn.disabled = true;
-            skipBtn.disabled = false;
-            endBtn.disabled = false;
+            if (startBtn.textContent === 'Find Debate Partner') {
+                const tags = document.getElementById('tags').value.split(',').map(t => t.trim()).filter(Boolean);
+                socket.emit('find', { tags });
+                addMessage('🔎 Searching for debate partner...', 'system');
+                startBtn.disabled = true; startBtn.textContent = 'Searching...';
+                skipBtn.disabled = false; endBtn.disabled = false;
+            }
         };
 
         skipBtn.onclick = () => {
-            socket.emit('skip');
-            chatEl.innerHTML = '';
-            topicEl.textContent = '';
+            socket.emit('skip'); chatEl.innerHTML = ''; 
+            topicEl.textContent = 'Connect with strangers for random debates on interesting topics!';
             resetUI();
-            addMessage('Skipped. Click "Find Debate Partner" to search again.', 'system');
+            addMessage('⏭️ Skipped partner. Click "Find Debate Partner" to search again.', 'system');
         };
 
         endBtn.onclick = () => {
             if (currentRoom) socket.emit('end', { roomId: currentRoom });
-            chatEl.innerHTML = '';
-            topicEl.textContent = '';
+            chatEl.innerHTML = ''; 
+            topicEl.textContent = 'Connect with strangers for random debates on interesting topics!';
             resetUI();
-            addMessage('Debate ended. Click "Find Debate Partner" to search again.', 'system');
+            addMessage('🏁 Debate ended. Click "Find Debate Partner" for another round.', 'system');
         };
 
         sendBtn.onclick = () => {
             if (!currentRoom) return;
             const text = msgBox.value.trim();
             if (!text) return;
-            socket.emit('message', { roomId: currentRoom, text });
+
+            // Add message to our own chat immediately
             addMessage('You: ' + text, 'me');
+
+            // Send to server (server will only send to opponent, not back to us)
+            socket.emit('message', { roomId: currentRoom, text });
             msgBox.value = '';
         };
 
@@ -447,75 +548,55 @@ function getEmbeddedHTML(): string {
 
         socket.on('connect', () => {
             addMessage('✅ Connected to Debate Omegle!', 'system');
-            fetch('/api/stats').then(res => res.json()).then(data => {
-                statsEl.textContent = data.totalConnections + ' online • ' + data.activeRooms + ' active debates • ' + data.waitingUsers + ' waiting';
-            }).catch(() => {
-                statsEl.textContent = 'Stats unavailable';
-            });
+            updateStats();
         });
 
-        socket.on('disconnect', () => {
-            addMessage('❌ Disconnected. Trying to reconnect...', 'system');
+        socket.on('disconnect', () => { 
+            addMessage('❌ Disconnected. Reconnecting...', 'system'); 
             resetUI();
         });
 
         socket.on('system', (msg) => addMessage(msg, 'system'));
 
         socket.on('matched', ({ roomId, topic, duration }) => {
-            currentRoom = roomId;
-            chatEl.innerHTML = '';
+            currentRoom = roomId; chatEl.innerHTML = '';
             const durationMin = Math.floor(duration / 1000 / 60);
-            topicEl.textContent = '🗣 Debate Topic: ' + topic + ' (' + durationMin + 'min)';
-            msgBox.disabled = false;
-            sendBtn.disabled = false;
-            addMessage('🎯 Connected! Start your debate now. Be respectful!', 'system');
+            topicEl.innerHTML = '🎯 <strong>Debate Topic:</strong> ' + topic + ' <small>(' + durationMin + ' min)</small>';
+            msgBox.disabled = false; sendBtn.disabled = false;
+            addMessage('🎉 Connected to opponent! Start your debate now. Be respectful and have fun!', 'system');
             msgBox.focus();
+            updateStats();
         });
 
         socket.on('msg', ({ from, text }) => {
-            const type = from === socket.id ? 'me' : 'other';
-            addMessage((type === 'me' ? 'You' : 'Opponent') + ': ' + text, type);
+            // Only show opponent messages (we already show our own immediately)
+            addMessage('Opponent: ' + text, 'other');
         });
 
         socket.on('room_ended', ({ reason }) => {
             addMessage('💬 Debate ended: ' + reason, 'system');
-            addMessage('Thanks for debating! Click "Find Debate Partner" for another round.', 'system');
-            resetUI();
-            topicEl.textContent = '';
+            addMessage('Thanks for the great debate! Click "Find Debate Partner" for another round.', 'system');
+            resetUI(); 
+            topicEl.textContent = 'Connect with strangers for random debates on interesting topics!';
+            updateStats();
         });
 
-        addMessage('Welcome to Debate Omegle! Enter your interests (optional) and click "Find Debate Partner" to start.', 'system');
+        // Update stats every 3 seconds
+        setInterval(updateStats, 3000);
+
+        // Welcome message
+        addMessage('Welcome to Debate Omegle! 🎉', 'system');
+        addMessage('Enter your interests (optional) and click "Find Debate Partner" to start debating with strangers worldwide.', 'system');
+
+        // Initial stats load
+        updateStats();
     </script>
 </body>
-</html>`;
-}
-
-// Error handling middleware
-app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  logger.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error' });
+</html>`);
 });
 
 const PORT = process.env.PORT || 3000;
-
 server.listen(PORT, () => {
-  logger.info(`🚀 Debate Omegle server running on port ${PORT}`);
-  logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
-  logger.info('Static file paths configured for Render deployment');
-});
-
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received, shutting down gracefully');
-  server.close(() => {
-    logger.info('Process terminated');
-    process.exit(0);
-  });
-});
-
-process.on('SIGINT', () => {
-  logger.info('SIGINT received, shutting down gracefully');
-  server.close(() => {
-    logger.info('Process terminated');
-    process.exit(0);
-  });
+  logger.info(`🚀 Debate Omegle running on port ${PORT}`);
+  logger.info('✅ Fixed duplicate messages + improved UI!');
 });
