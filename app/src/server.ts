@@ -33,29 +33,79 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Type definitions
+// FIXED: Type definitions with consistent null/undefined usage
+type SocketId = string;
+type RoomId = string;
+type UserId = string;
+
 interface WaitingUser {
-  socketId: string;
+  socketId: SocketId;
+  userId: UserId;
   tags: string[];
+  joinedAt: number;
 }
 
 interface ActiveRoom {
-  users: string[];
+  id: RoomId;
+  users: SocketId[];
+  userIds: UserId[];
   topic: string;
   startTime: number;
+  duration: number;
+  isInterestMatch: boolean;
+  commonTag?: string; // FIXED: Use undefined instead of null for consistency
+  lastActivity: number;
 }
 
 interface MatchResult {
-  matchId: string | null;
-  commonTag: string | null;
+  matchId: SocketId | null;
+  matchUserId: UserId | null;
+  commonTag: string | null; // Keep null here for logic, but convert when storing
 }
 
-// Simple in-memory storage
-const waitingUsers = new Map<string, WaitingUser>();
-const activeRooms = new Map<string, ActiveRoom>();
-const userRoomMap = new Map<string, string>();
+interface ServerToClientEvents {
+  system: (message: string) => void;
+  matched: (data: {
+    roomId: RoomId;
+    topic: string;
+    duration: number;
+    isInterestMatch: boolean;
+  }) => void;
+  msg: (data: {
+    from: SocketId;
+    text: string;
+    timestamp: number;
+  }) => void;
+  room_ended: (data: { reason: string }) => void;
+  room_closed: (data: { roomId: RoomId }) => void;
+  stats: (data: {
+    activeRooms: number;
+    waitingUsers: number;
+    totalConnections: number;
+    timestamp: number;
+  }) => void;
+  typing: (data: { from: SocketId }) => void;
+}
 
-// Debate topics (fallback when no common interests)
+interface ClientToServerEvents {
+  find: (data: { tags?: string[] }) => void;
+  message: (data: { roomId: RoomId; text: string }) => void;
+  skip: () => void;
+  end: (data: { roomId: RoomId }) => void;
+  typing: (data: { roomId: RoomId }) => void;
+}
+
+// Strongly typed storage
+const waitingUsers = new Map<SocketId, WaitingUser>();
+const activeRooms = new Map<RoomId, ActiveRoom>();
+const userRoomMap = new Map<SocketId, RoomId>();
+const roomTimers = new Map<RoomId, NodeJS.Timeout>();
+const userSocketMap = new Map<UserId, SocketId>();
+
+// Rate limiting storage
+const rateLimits = new Map<SocketId, { messages: number[]; lastReset: number }>();
+
+// Enhanced debate topics
 const DEBATE_TOPICS: string[] = [
   "Pineapple belongs on pizza",
   "Cats are better than dogs", 
@@ -79,204 +129,177 @@ const DEBATE_TOPICS: string[] = [
   "Is remote work better than office work?"
 ];
 
+function generateInterestPrompt(interest: string): string {
+  const prompts = [
+    `Is ${interest} overrated?`,
+    `Should everyone try ${interest}?`,
+    `Is ${interest} worth the hype?`,
+    `What's the best thing about ${interest}?`,
+    `Is ${interest} a waste of time or valuable hobby?`
+  ];
+  return prompts[Math.floor(Math.random() * prompts.length)];
+}
+
 function getRandomTopic(): string {
   return DEBATE_TOPICS[Math.floor(Math.random() * DEBATE_TOPICS.length)];
 }
 
-function generateRoomId(): string {
+function generateRoomId(): RoomId {
   return `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
-// SMART INTEREST MATCHING with fuzzy matching
-function findMatch(userId: string, userTags: string[]): MatchResult {
-  // Helper function to normalize tags (remove punctuation, lowercase, trim)
-  const normalize = (str: string): string => 
-    str.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+function generateUserId(): UserId {
+  return `user_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+}
 
-  const normalizedUserTags = userTags.map(normalize);
+// Enhanced matching with per-tag queues
+const tagQueues = new Map<string, SocketId[]>();
 
-  // 1. First priority: Exact match (case and punctuation insensitive)
-  for (const [waitingId, waitingData] of waitingUsers.entries()) {
-    if (waitingId === userId) continue;
+function normalizeTag(tag: string): string {
+  return tag.toLowerCase().trim().replace(/[^a-z0-9]/g, '');
+}
 
-    const normalizedWaitingTags = waitingData.tags.map(normalize);
-    const commonTag = normalizedUserTags.find(userTag => 
-      normalizedWaitingTags.includes(userTag)
-    );
+function addToTagQueues(socketId: SocketId, tags: string[]): void {
+  tags.forEach(tag => {
+    const normalized = normalizeTag(tag);
+    if (!tagQueues.has(normalized)) {
+      tagQueues.set(normalized, []);
+    }
+    const queue = tagQueues.get(normalized)!;
+    if (!queue.includes(socketId)) {
+      queue.push(socketId);
+    }
+  });
+}
 
-    if (commonTag) {
-      // Find the original tag from waiting user for display
-      const originalTag = waitingData.tags.find(tag => 
-        normalize(tag) === commonTag
-      ) || commonTag;
+function removeFromTagQueues(socketId: SocketId): void {
+  for (const [tag, queue] of tagQueues.entries()) {
+    const index = queue.indexOf(socketId);
+    if (index !== -1) {
+      queue.splice(index, 1);
+      if (queue.length === 0) {
+        tagQueues.delete(tag);
+      }
+    }
+  }
+}
 
-      return { matchId: waitingId, commonTag: originalTag };
+function findMatch(socketId: SocketId, userTags: string[]): MatchResult {
+  const normalizedUserTags = userTags.map(normalizeTag);
+
+  // 1. Try exact tag matches using queues (O(1) lookup)
+  for (const userTag of normalizedUserTags) {
+    const queue = tagQueues.get(userTag);
+    if (queue) {
+      for (const waitingSocketId of queue) {
+        if (waitingSocketId === socketId) continue;
+        const waitingUser = waitingUsers.get(waitingSocketId);
+        if (waitingUser) {
+          const originalTag = waitingUser.tags.find(tag => 
+            normalizeTag(tag) === userTag
+          ) || userTag;
+
+          return { 
+            matchId: waitingSocketId, 
+            matchUserId: waitingUser.userId, 
+            commonTag: originalTag 
+          };
+        }
+      }
     }
   }
 
-  // 2. Second priority: Partial similarity (cat vs cats, game vs gaming)
-  for (const [waitingId, waitingData] of waitingUsers.entries()) {
-    if (waitingId === userId) continue;
+  // 2. Fuzzy matching for similar tags
+  for (const [socketId2, waitingData] of waitingUsers.entries()) {
+    if (socketId2 === socketId) continue;
 
-    const normalizedWaitingTags = waitingData.tags.map(normalize);
+    const normalizedWaitingTags = waitingData.tags.map(normalizeTag);
 
     for (const userTag of normalizedUserTags) {
       const similarTag = normalizedWaitingTags.find(waitingTag => 
-        waitingTag.startsWith(userTag) || userTag.startsWith(waitingTag) ||
-        waitingTag.includes(userTag) || userTag.includes(waitingTag)
+        waitingTag.startsWith(userTag) || 
+        userTag.startsWith(waitingTag) ||
+        (userTag.length > 3 && waitingTag.length > 3 && 
+         (waitingTag.includes(userTag) || userTag.includes(waitingTag)))
       );
 
       if (similarTag) {
         const originalTag = waitingData.tags.find(tag => 
-          normalize(tag) === similarTag
+          normalizeTag(tag) === similarTag
         ) || similarTag;
 
-        return { matchId: waitingId, commonTag: originalTag };
+        return { 
+          matchId: socketId2, 
+          matchUserId: waitingData.userId, 
+          commonTag: originalTag 
+        };
       }
     }
   }
 
-  // 3. Third priority: Users without specific interests (empty tags)
-  if (userTags.length === 0) {
-    for (const [waitingId, waitingData] of waitingUsers.entries()) {
-      if (waitingId === userId) continue;
-      if (waitingData.tags.length === 0) {
-        return { matchId: waitingId, commonTag: null };
-      }
+  // 3. Fallback to any waiting user
+  for (const [waitingSocketId, waitingData] of waitingUsers.entries()) {
+    if (waitingSocketId !== socketId) {
+      return { 
+        matchId: waitingSocketId, 
+        matchUserId: waitingData.userId, 
+        commonTag: null 
+      };
     }
   }
 
-  // 4. Final fallback: Any waiting user
-  for (const [waitingId] of waitingUsers.entries()) {
-    if (waitingId !== userId) {
-      return { matchId: waitingId, commonTag: null };
-    }
-  }
-
-  return { matchId: null, commonTag: null };
+  return { matchId: null, matchUserId: null, commonTag: null };
 }
 
-// Socket.IO setup
-const io = new IOServer(server, {
-  cors: {
-    origin: process.env.NODE_ENV === 'production' ? false : '*',
-    methods: ['GET', 'POST']
-  },
-  transports: ['websocket', 'polling']
-});
+// Rate limiting
+function checkRateLimit(socketId: SocketId, maxPerMinute: number = 20): boolean {
+  const now = Date.now();
+  const limit = rateLimits.get(socketId) || { messages: [], lastReset: now };
 
-// Socket.IO connection handling
-io.on('connection', (socket) => {
-  logger.info(`User connected: ${socket.id}`);
+  // Reset every minute
+  if (now - limit.lastReset > 60000) {
+    limit.messages = [];
+    limit.lastReset = now;
+  }
 
-  socket.on('find', ({ tags = [] }: { tags?: string[] }) => {
-    logger.info(`User ${socket.id} searching with tags: ${tags.join(', ')}`);
+  limit.messages.push(now);
+  limit.messages = limit.messages.filter(time => now - time < 60000);
 
-    if (userRoomMap.has(socket.id)) {
-      socket.emit('system', 'You are already in a debate!');
-      return;
-    }
+  rateLimits.set(socketId, limit);
 
-    // FIXED: Use the new match result structure
-    const matchResult = findMatch(socket.id, tags);
-    const { matchId, commonTag } = matchResult;
+  return limit.messages.length <= maxPerMinute;
+}
 
-    if (matchId) {
-      const roomId = generateRoomId();
-      const duration = 5 * 60 * 1000;
+// Room timer management
+function startRoomTimer(roomId: RoomId, duration: number): void {
+  clearRoomTimer(roomId);
+  const timer = setTimeout(() => {
+    endRoom(roomId, 'Time expired');
+  }, duration);
+  roomTimers.set(roomId, timer);
+}
 
-      // SMART TOPIC SELECTION: Show common interest or random topic
-      let topic: string;
-      if (commonTag) {
-        topic = `💡 Shared Interest: ${commonTag}`;
-        logger.info(`Matched users with shared interest: ${commonTag}`);
-      } else {
-        topic = getRandomTopic();
-        logger.info('Matched users with random topic');
-      }
+function clearRoomTimer(roomId: RoomId): void {
+  const timer = roomTimers.get(roomId);
+  if (timer) {
+    clearTimeout(timer);
+    roomTimers.delete(roomId);
+  }
+}
 
-      activeRooms.set(roomId, {
-        users: [socket.id, matchId],
-        topic,
-        startTime: Date.now()
-      });
-
-      userRoomMap.set(socket.id, roomId);
-      userRoomMap.set(matchId, roomId);
-
-      waitingUsers.delete(matchId);
-
-      socket.join(roomId);
-      io.sockets.sockets.get(matchId)?.join(roomId);
-
-      io.to(roomId).emit('matched', {
-        roomId,
-        topic,
-        duration,
-        isInterestMatch: !!commonTag
-      });
-
-      logger.info(`Matched ${socket.id} and ${matchId} in room ${roomId} - Topic: ${topic}`);
-
-      setTimeout(() => {
-        endRoom(roomId, 'Time expired');
-      }, duration);
-
-    } else {
-      waitingUsers.set(socket.id, { socketId: socket.id, tags });
-      socket.emit('system', 'Waiting for an opponent...');
-    }
-  });
-
-  socket.on('message', ({ roomId, text }: { roomId: string; text: string }) => {
-    if (!roomId || !activeRooms.has(roomId)) return;
-    if (userRoomMap.get(socket.id) !== roomId) return;
-
-    if (!text || text.trim().length === 0 || text.length > 500) return;
-
-    socket.to(roomId).emit('msg', {
-      from: socket.id,
-      text: text.trim(),
-      timestamp: Date.now()
-    });
-  });
-
-  socket.on('skip', () => {
-    const roomId = userRoomMap.get(socket.id);
-
-    if (!roomId) {
-      waitingUsers.delete(socket.id);
-      socket.emit('system', 'Search cancelled');
-      return;
-    }
-
-    endRoom(roomId, 'User skipped');
-  });
-
-  socket.on('end', ({ roomId }: { roomId: string }) => {
-    if (!roomId || !activeRooms.has(roomId)) return;
-    endRoom(roomId, 'User ended the debate');
-  });
-
-  socket.on('disconnect', () => {
-    logger.info(`User disconnected: ${socket.id}`);
-
-    waitingUsers.delete(socket.id);
-
-    const roomId = userRoomMap.get(socket.id);
-    if (roomId) {
-      endRoom(roomId, 'User disconnected');
-    }
-  });
-});
-
-function endRoom(roomId: string, reason: string): void {
+// Enhanced room management
+function endRoom(roomId: RoomId, reason: string): void {
   const room = activeRooms.get(roomId);
   if (!room) return;
 
-  io.to(roomId).emit('room_ended', { reason });
+  clearRoomTimer(roomId);
 
-  room.users.forEach((userId: string) => {
+  // Notify users
+  io.to(roomId).emit('room_ended', { reason });
+  io.to(roomId).emit('room_closed', { roomId });
+
+  // Clean up users
+  room.users.forEach((userId: SocketId) => {
     userRoomMap.delete(userId);
     const userSocket = io.sockets.sockets.get(userId);
     if (userSocket) {
@@ -285,34 +308,234 @@ function endRoom(roomId: string, reason: string): void {
   });
 
   activeRooms.delete(roomId);
-  logger.info(`Room ${roomId} ended: ${reason}`);
+  logger.info({ roomId, reason }, 'Room ended');
 }
 
-// API endpoints
-app.get('/api/stats', (req: express.Request, res: express.Response) => {
-  res.json({
+// Socket.IO with enhanced typing
+const io = new IOServer<ClientToServerEvents, ServerToClientEvents>(server, {
+  cors: {
+    origin: process.env.NODE_ENV === 'production' ? false : '*',
+    methods: ['GET', 'POST']
+  },
+  transports: ['websocket', 'polling'],
+  pingTimeout: 60000,
+  pingInterval: 25000
+});
+
+// Socket connection handling
+io.on('connection', (socket) => {
+  const userId = generateUserId();
+  userSocketMap.set(userId, socket.id);
+
+  logger.info({ socketId: socket.id, userId }, 'User connected');
+
+  socket.on('find', ({ tags = [] }: { tags?: string[] }) => {
+    if (userRoomMap.has(socket.id)) {
+      socket.emit('system', 'You are already in a debate!');
+      return;
+    }
+
+    logger.info({ socketId: socket.id, userId, tags }, 'User searching for match');
+
+    const matchResult = findMatch(socket.id, tags);
+    const { matchId, matchUserId, commonTag } = matchResult;
+
+    if (matchId && matchUserId) {
+      const roomId = generateRoomId();
+      const duration = parseInt(process.env.ROOM_DURATION_MS || '300000'); // 5 minutes
+
+      let topic: string;
+      let isInterestMatch = false;
+
+      if (commonTag) {
+        topic = generateInterestPrompt(commonTag);
+        isInterestMatch = true;
+        logger.info({ roomId, commonTag, topic }, 'Interest-based match created');
+      } else {
+        topic = getRandomTopic();
+        logger.info({ roomId, topic }, 'Random topic match created');
+      }
+
+      // FIXED: Convert null to undefined when storing in ActiveRoom
+      const room: ActiveRoom = {
+        id: roomId,
+        users: [socket.id, matchId],
+        userIds: [userId, matchUserId],
+        topic,
+        startTime: Date.now(),
+        duration,
+        isInterestMatch,
+        commonTag: commonTag || undefined, // FIXED: Convert null to undefined
+        lastActivity: Date.now()
+      };
+
+      activeRooms.set(roomId, room);
+      userRoomMap.set(socket.id, roomId);
+      userRoomMap.set(matchId, roomId);
+
+      // Clean up waiting state
+      waitingUsers.delete(matchId);
+      removeFromTagQueues(matchId);
+
+      // Join room
+      socket.join(roomId);
+      io.sockets.sockets.get(matchId)?.join(roomId);
+
+      // Start timer
+      startRoomTimer(roomId, duration);
+
+      // Notify users
+      io.to(roomId).emit('matched', {
+        roomId,
+        topic,
+        duration,
+        isInterestMatch
+      });
+
+    } else {
+      // Add to waiting queue
+      const waitingUser: WaitingUser = {
+        socketId: socket.id,
+        userId,
+        tags,
+        joinedAt: Date.now()
+      };
+
+      waitingUsers.set(socket.id, waitingUser);
+      addToTagQueues(socket.id, tags);
+
+      socket.emit('system', 'Waiting for an opponent...');
+    }
+  });
+
+  socket.on('message', ({ roomId, text }: { roomId: string; text: string }) => {
+    if (!checkRateLimit(socket.id, 30)) {
+      socket.emit('system', 'Message rate limit exceeded');
+      return;
+    }
+
+    const room = activeRooms.get(roomId);
+    if (!room || !room.users.includes(socket.id)) return;
+
+    // Update room activity
+    room.lastActivity = Date.now();
+
+    // Broadcast to other users in room
+    socket.to(roomId).emit('msg', {
+      from: socket.id,
+      text: text.trim(),
+      timestamp: Date.now()
+    });
+  });
+
+  socket.on('typing', ({ roomId }: { roomId: string }) => {
+    const room = activeRooms.get(roomId);
+    if (!room || !room.users.includes(socket.id)) return;
+
+    socket.to(roomId).emit('typing', { from: socket.id });
+  });
+
+  socket.on('skip', () => {
+    const roomId = userRoomMap.get(socket.id);
+
+    if (!roomId) {
+      waitingUsers.delete(socket.id);
+      removeFromTagQueues(socket.id);
+      socket.emit('system', 'Search cancelled');
+      return;
+    }
+
+    endRoom(roomId, 'User skipped');
+  });
+
+  socket.on('end', ({ roomId }: { roomId: string }) => {
+    const room = activeRooms.get(roomId);
+    if (!room || !room.users.includes(socket.id)) return;
+
+    endRoom(roomId, 'User ended the debate');
+  });
+
+  socket.on('disconnect', (reason) => {
+    logger.info({ socketId: socket.id, userId, reason }, 'User disconnected');
+
+    // Clean up waiting state
+    waitingUsers.delete(socket.id);
+    removeFromTagQueues(socket.id);
+    rateLimits.delete(socket.id);
+    userSocketMap.delete(userId);
+
+    // End active room if in one
+    const roomId = userRoomMap.get(socket.id);
+    if (roomId) {
+      endRoom(roomId, 'User disconnected');
+    }
+  });
+});
+
+// Real-time stats broadcasting
+setInterval(() => {
+  const stats = {
     activeRooms: activeRooms.size,
     waitingUsers: waitingUsers.size,
     totalConnections: io.sockets.sockets.size,
+    timestamp: Date.now()
+  };
+
+  io.emit('stats', stats);
+}, 3000);
+
+// API endpoints
+app.get('/api/stats', (req: express.Request, res: express.Response) => {
+  const stats = {
+    activeRooms: activeRooms.size,
+    waitingUsers: waitingUsers.size,
+    totalConnections: io.sockets.sockets.size,
+    uptime: process.uptime(),
     timestamp: new Date().toISOString(),
-    uptime: process.uptime()
+    memory: process.memoryUsage(),
+    tagQueues: tagQueues.size
+  };
+
+  res.json(stats);
+});
+
+app.get('/api/health', (req: express.Request, res: express.Response) => {
+  res.json({ 
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    version: process.env.npm_package_version || '1.0.0'
   });
+});
+
+app.get('/metrics', (req: express.Request, res: express.Response) => {
+  const metrics = [
+    `# HELP debate_active_rooms Number of active debate rooms`,
+    `# TYPE debate_active_rooms gauge`,
+    `debate_active_rooms ${activeRooms.size}`,
+    `# HELP debate_waiting_users Number of users waiting for matches`,
+    `# TYPE debate_waiting_users gauge`, 
+    `debate_waiting_users ${waitingUsers.size}`,
+    `# HELP debate_total_connections Total WebSocket connections`,
+    `# TYPE debate_total_connections gauge`,
+    `debate_total_connections ${io.sockets.sockets.size}`,
+    `# HELP debate_uptime_seconds Server uptime in seconds`,
+    `# TYPE debate_uptime_seconds counter`,
+    `debate_uptime_seconds ${Math.floor(process.uptime())}`
+  ].join('\n');
+
+  res.set('Content-Type', 'text/plain');
+  res.send(metrics);
 });
 
 app.get('/api/topics', (req: express.Request, res: express.Response) => {
-  res.json({ topics: DEBATE_TOPICS, count: DEBATE_TOPICS.length });
-});
-
-app.get('/health', (req: express.Request, res: express.Response) => {
   res.json({ 
-    status: 'ok', 
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    mode: 'memory-only'
+    topics: DEBATE_TOPICS, 
+    count: DEBATE_TOPICS.length 
   });
 });
 
-// MAIN ROUTE - With enhanced UI for interest matching
+// Main HTML route with complete UI
 app.get('/', (req: express.Request, res: express.Response) => {
   res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -329,7 +552,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
             min-height: 100vh; display: flex; flex-direction: column;
         }
 
-        /* Header */
         .header {
             display: flex; justify-content: space-between; align-items: center;
             padding: 15px 20px; background: rgba(28, 28, 28, 0.9);
@@ -342,7 +564,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
             display: flex; align-items: center; gap: 10px;
         }
 
-        /* Stats Cards Container */
         .stats-container {
             display: flex; gap: 15px; align-items: center;
         }
@@ -374,7 +595,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
             font-weight: 500;
         }
 
-        /* Different colors for each stat */
         .stat-card.online {
             background: linear-gradient(135deg, rgba(46, 213, 115, 0.15), rgba(46, 213, 115, 0.05));
             border-color: rgba(46, 213, 115, 0.3);
@@ -411,13 +631,11 @@ app.get('/', (req: express.Request, res: express.Response) => {
             border-color: rgba(255, 184, 0, 0.5);
         }
 
-        /* Main container */
         .container {
             display: flex; gap: 15px; flex: 1;
             max-width: 1200px; margin: 0 auto; width: 100%;
         }
 
-        /* Chat area */
         .chat-area {
             flex: 1; background: #1c1c1c;
             border-radius: 15px; padding: 20px;
@@ -433,7 +651,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
             min-height: 45px; display: flex; align-items: center; justify-content: center;
         }
 
-        /* Special styling for interest matches */
         #topic.interest-match {
             background: linear-gradient(135deg, rgba(46, 213, 115, 0.15), rgba(46, 213, 115, 0.05));
             border-color: rgba(46, 213, 115, 0.4);
@@ -473,7 +690,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
             font-size: 0.9em; margin: 10px 0;
         }
 
-        /* Input area */
         #inputArea {
             display: flex; gap: 10px; margin-bottom: 15px;
         }
@@ -489,7 +705,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
             box-shadow: 0 0 0 2px rgba(77, 182, 255, 0.2);
         }
 
-        /* Controls */
         #controls {
             display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
         }
@@ -528,7 +743,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
         #endBtn { background: #ff4757; }
         #endBtn:hover:not(:disabled) { background: #e73c4e; }
 
-        /* Status indicator */
         .status-dot {
             width: 8px; height: 8px; border-radius: 50%;
             background: #2ed573; margin-right: 8px;
@@ -540,13 +754,11 @@ app.get('/', (req: express.Request, res: express.Response) => {
             50% { opacity: 0.6; }
         }
 
-        /* Scrollbar styling */
         #chat::-webkit-scrollbar { width: 8px; }
         #chat::-webkit-scrollbar-track { background: #1a1a1a; border-radius: 4px; }
         #chat::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
         #chat::-webkit-scrollbar-thumb:hover { background: #666; }
 
-        /* Responsive design */
         @media (max-width: 768px) {
             .container { flex-direction: column; }
             .header { flex-direction: column; gap: 15px; text-align: center; }
@@ -557,7 +769,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
             #chat { height: 300px; }
         }
 
-        /* Update animation for stats */
         .stat-number.updating {
             animation: numberPulse 0.5s ease;
         }
@@ -567,7 +778,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
             50% { transform: scale(1.1); }
         }
 
-        /* Interest hint */
         .interest-hint {
             font-size: 0.9em; color: #aaa; margin-top: 5px;
             text-align: center;
@@ -623,9 +833,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
         const startBtn = document.getElementById('startBtn');
         const skipBtn = document.getElementById('skipBtn');
         const endBtn = document.getElementById('endBtn');
-        const onlineEl = document.getElementById('online');
-        const debatesEl = document.getElementById('debates');
-        const waitingEl = document.getElementById('waiting');
         let currentRoom = null;
 
         function addMessage(text, type = 'system') {
@@ -641,25 +848,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
             skipBtn.disabled = true; endBtn.disabled = true;
             msgBox.disabled = true; sendBtn.disabled = true; currentRoom = null;
             topicEl.classList.remove('interest-match');
-        }
-
-        function animateStatUpdate(element, newValue) {
-            if (element.textContent !== newValue.toString()) {
-                element.classList.add('updating');
-                element.textContent = newValue;
-                setTimeout(() => element.classList.remove('updating'), 500);
-            }
-        }
-
-        function updateStats() {
-            fetch('/api/stats')
-                .then(res => res.json())
-                .then(data => {
-                    animateStatUpdate(onlineEl, data.totalConnections);
-                    animateStatUpdate(debatesEl, data.activeRooms);
-                    animateStatUpdate(waitingEl, data.waitingUsers);
-                })
-                .catch(err => console.log('Stats update failed:', err));
         }
 
         startBtn.onclick = () => {
@@ -711,7 +899,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
 
         socket.on('connect', () => {
             addMessage('✅ Connected to Debate Omegle!', 'system');
-            updateStats();
         });
 
         socket.on('disconnect', () => { 
@@ -725,7 +912,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
             currentRoom = roomId; chatEl.innerHTML = '';
             const durationMin = Math.floor(duration / 1000 / 60);
 
-            // Handle interest match vs regular topic differently
             if (isInterestMatch) {
                 topicEl.textContent = topic;
                 topicEl.classList.add('interest-match');
@@ -738,7 +924,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
 
             msgBox.disabled = false; sendBtn.disabled = false;
             msgBox.focus();
-            updateStats();
         });
 
         socket.on('msg', ({ from, text }) => {
@@ -750,25 +935,63 @@ app.get('/', (req: express.Request, res: express.Response) => {
             addMessage('Thanks for the great conversation! Click "Find Debate Partner" for another round.', 'system');
             resetUI(); 
             topicEl.textContent = 'Connect with strangers for random debates on interesting topics!';
-            updateStats();
         });
 
-        // Update stats every 3 seconds
-        setInterval(updateStats, 3000);
+        socket.on('stats', ({ activeRooms, waitingUsers, totalConnections }) => {
+            document.getElementById('online').textContent = totalConnections;
+            document.getElementById('debates').textContent = activeRooms;
+            document.getElementById('waiting').textContent = waitingUsers;
+        });
 
-        // Welcome message
         addMessage('Welcome to Debate Omegle! 🎉', 'system');
         addMessage('Enter your interests (separated by commas) to find people with similar hobbies, or leave blank for random debates.', 'system');
-
-        // Initial stats load
-        updateStats();
     </script>
 </body>
 </html>`);
 });
 
-const PORT = process.env.PORT || 3000;
+// Graceful shutdown
+let isShuttingDown = false;
+
+const gracefulShutdown = (signal: string) => {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  logger.info({ signal }, 'Received shutdown signal, closing server gracefully');
+
+  server.close(() => {
+    logger.info('HTTP server closed');
+
+    for (const [roomId] of activeRooms) {
+      endRoom(roomId, 'Server maintenance');
+    }
+
+    io.close(() => {
+      logger.info('Socket.IO server closed');
+
+      for (const [roomId] of roomTimers) {
+        clearRoomTimer(roomId);
+      }
+
+      logger.info('Graceful shutdown completed');
+      process.exit(0);
+    });
+  });
+
+  setTimeout(() => {
+    logger.error('Forceful shutdown after timeout');
+    process.exit(1);
+  }, 30000);
+};
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+
+const PORT = parseInt(process.env.PORT || '3000');
+
 server.listen(PORT, () => {
-  logger.info(`🚀 Debate Omegle running on port ${PORT}`);
-  logger.info('✅ Smart interest matching enabled!');
+  logger.info({ 
+    port: PORT, 
+    env: process.env.NODE_ENV || 'development'
+  }, '🚀 Production Debate Omegle server started');
 });
