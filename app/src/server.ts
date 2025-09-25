@@ -170,7 +170,6 @@ io.on('connection', (socket) => {
 
     if (!text || text.trim().length === 0 || text.length > 500) return;
 
-    // FIXED: Only send to other users in room, not back to sender
     socket.to(roomId).emit('msg', {
       from: socket.id,
       text: text.trim(),
@@ -225,7 +224,7 @@ function endRoom(roomId: string, reason: string): void {
   logger.info(`Room ${roomId} ended: ${reason}`);
 }
 
-// API endpoints - all built-in
+// API endpoints
 app.get('/api/stats', (req: express.Request, res: express.Response) => {
   res.json({
     activeRooms: activeRooms.size,
@@ -249,7 +248,7 @@ app.get('/health', (req: express.Request, res: express.Response) => {
   });
 });
 
-// MAIN ROUTE - Complete embedded HTML with improved UI
+// MAIN ROUTE - With horizontal stat cards
 app.get('/', (req: express.Request, res: express.Response) => {
   res.send(`<!DOCTYPE html>
 <html lang="en">
@@ -266,12 +265,12 @@ app.get('/', (req: express.Request, res: express.Response) => {
             min-height: 100vh; display: flex; flex-direction: column;
         }
 
-        /* Header with stats */
+        /* Header */
         .header {
             display: flex; justify-content: space-between; align-items: center;
             padding: 15px 20px; background: rgba(28, 28, 28, 0.9);
-            border-radius: 10px; margin-bottom: 15px;
-            backdrop-filter: blur(10px);
+            border-radius: 12px; margin-bottom: 20px;
+            backdrop-filter: blur(10px); border: 1px solid #333;
         }
 
         .header h1 {
@@ -279,16 +278,73 @@ app.get('/', (req: express.Request, res: express.Response) => {
             display: flex; align-items: center; gap: 10px;
         }
 
-        .stats-box {
-            background: rgba(77, 182, 255, 0.1);
-            border: 1px solid rgba(77, 182, 255, 0.3);
-            border-radius: 8px; padding: 10px 15px;
-            font-size: 0.9em; color: #4db6ff;
-            min-width: 200px; text-align: right;
+        /* Stats Cards Container */
+        .stats-container {
+            display: flex; gap: 15px; align-items: center;
         }
 
-        .stats-item {
-            display: block; margin: 2px 0;
+        .stat-card {
+            background: linear-gradient(135deg, rgba(77, 182, 255, 0.1), rgba(77, 182, 255, 0.05));
+            border: 1px solid rgba(77, 182, 255, 0.3);
+            border-radius: 10px; padding: 12px 16px;
+            text-align: center; min-width: 90px;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(5px);
+        }
+
+        .stat-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(77, 182, 255, 0.2);
+            border-color: rgba(77, 182, 255, 0.5);
+        }
+
+        .stat-number {
+            font-size: 1.4em; font-weight: 700;
+            color: #4db6ff; line-height: 1;
+            margin-bottom: 4px;
+        }
+
+        .stat-label {
+            font-size: 0.8em; color: #aaa;
+            text-transform: uppercase; letter-spacing: 0.5px;
+            font-weight: 500;
+        }
+
+        /* Different colors for each stat */
+        .stat-card.online {
+            background: linear-gradient(135deg, rgba(46, 213, 115, 0.15), rgba(46, 213, 115, 0.05));
+            border-color: rgba(46, 213, 115, 0.3);
+        }
+
+        .stat-card.online .stat-number { color: #2ed573; }
+
+        .stat-card.online:hover {
+            box-shadow: 0 8px 20px rgba(46, 213, 115, 0.2);
+            border-color: rgba(46, 213, 115, 0.5);
+        }
+
+        .stat-card.debates {
+            background: linear-gradient(135deg, rgba(255, 107, 107, 0.15), rgba(255, 107, 107, 0.05));
+            border-color: rgba(255, 107, 107, 0.3);
+        }
+
+        .stat-card.debates .stat-number { color: #ff6b6b; }
+
+        .stat-card.debates:hover {
+            box-shadow: 0 8px 20px rgba(255, 107, 107, 0.2);
+            border-color: rgba(255, 107, 107, 0.5);
+        }
+
+        .stat-card.waiting {
+            background: linear-gradient(135deg, rgba(255, 184, 0, 0.15), rgba(255, 184, 0, 0.05));
+            border-color: rgba(255, 184, 0, 0.3);
+        }
+
+        .stat-card.waiting .stat-number { color: #ffb800; }
+
+        .stat-card.waiting:hover {
+            box-shadow: 0 8px 20px rgba(255, 184, 0, 0.2);
+            border-color: rgba(255, 184, 0, 0.5);
         }
 
         /* Main container */
@@ -396,6 +452,18 @@ app.get('/', (req: express.Request, res: express.Response) => {
         #endBtn { background: #ff4757; }
         #endBtn:hover:not(:disabled) { background: #e73c4e; }
 
+        /* Status indicator */
+        .status-dot {
+            width: 8px; height: 8px; border-radius: 50%;
+            background: #2ed573; margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
         /* Scrollbar styling */
         #chat::-webkit-scrollbar { width: 8px; }
         #chat::-webkit-scrollbar-track { background: #1a1a1a; border-radius: 4px; }
@@ -405,39 +473,41 @@ app.get('/', (req: express.Request, res: express.Response) => {
         /* Responsive design */
         @media (max-width: 768px) {
             .container { flex-direction: column; }
-            .header { flex-direction: column; gap: 10px; text-align: center; }
-            .stats-box { min-width: auto; text-align: center; }
+            .header { flex-direction: column; gap: 15px; text-align: center; }
+            .stats-container { justify-content: center; flex-wrap: wrap; }
+            .stat-card { min-width: 80px; }
             #controls { flex-direction: column; }
             #controls input { min-width: auto; }
             #chat { height: 300px; }
         }
 
-        /* Status indicator */
-        .status-dot {
-            width: 8px; height: 8px; border-radius: 50%;
-            background: #4db6ff; margin-right: 8px;
-            animation: pulse 2s infinite;
+        /* Update animation for stats */
+        .stat-number.updating {
+            animation: numberPulse 0.5s ease;
         }
 
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-
-        /* Typing indicator */
-        .typing-indicator {
-            display: none; color: #aaa; font-style: italic;
-            padding: 5px 12px; font-size: 0.9em;
+        @keyframes numberPulse {
+            0%, 100% { transform: scale(1); }
+            50% { transform: scale(1.1); }
         }
     </style>
 </head>
 <body>
     <div class="header">
         <h1><span class="status-dot"></span>🗣️ Debate Omegle</h1>
-        <div class="stats-box">
-            <div class="stats-item">👥 <span id="online">0</span> online</div>
-            <div class="stats-item">🗣️ <span id="debates">0</span> debates</div>
-            <div class="stats-item">⏳ <span id="waiting">0</span> waiting</div>
+        <div class="stats-container">
+            <div class="stat-card online">
+                <div class="stat-number" id="online">0</div>
+                <div class="stat-label">Online</div>
+            </div>
+            <div class="stat-card debates">
+                <div class="stat-number" id="debates">0</div>
+                <div class="stat-label">Debates</div>
+            </div>
+            <div class="stat-card waiting">
+                <div class="stat-number" id="waiting">0</div>
+                <div class="stat-label">Waiting</div>
+            </div>
         </div>
     </div>
 
@@ -445,7 +515,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
         <div class="chat-area">
             <div id="topic">Connect with strangers for random debates on interesting topics!</div>
             <div id="chat"></div>
-            <div class="typing-indicator" id="typingIndicator">Opponent is typing...</div>
 
             <div id="inputArea">
                 <input type="text" id="messageBox" placeholder="Type your argument..." disabled maxlength="500">
@@ -475,7 +544,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
         const debatesEl = document.getElementById('debates');
         const waitingEl = document.getElementById('waiting');
         let currentRoom = null;
-        let typingTimeout = null;
 
         function addMessage(text, type = 'system') {
             const msgDiv = document.createElement('div');
@@ -491,17 +559,23 @@ app.get('/', (req: express.Request, res: express.Response) => {
             msgBox.disabled = true; sendBtn.disabled = true; currentRoom = null;
         }
 
+        function animateStatUpdate(element, newValue) {
+            if (element.textContent !== newValue.toString()) {
+                element.classList.add('updating');
+                element.textContent = newValue;
+                setTimeout(() => element.classList.remove('updating'), 500);
+            }
+        }
+
         function updateStats() {
             fetch('/api/stats')
                 .then(res => res.json())
                 .then(data => {
-                    onlineEl.textContent = data.totalConnections;
-                    debatesEl.textContent = data.activeRooms;
-                    waitingEl.textContent = data.waitingUsers;
+                    animateStatUpdate(onlineEl, data.totalConnections);
+                    animateStatUpdate(debatesEl, data.activeRooms);
+                    animateStatUpdate(waitingEl, data.waitingUsers);
                 })
-                .catch(err => {
-                    console.log('Stats update failed:', err);
-                });
+                .catch(err => console.log('Stats update failed:', err));
         }
 
         startBtn.onclick = () => {
@@ -534,10 +608,7 @@ app.get('/', (req: express.Request, res: express.Response) => {
             const text = msgBox.value.trim();
             if (!text) return;
 
-            // Add message to our own chat immediately
             addMessage('You: ' + text, 'me');
-
-            // Send to server (server will only send to opponent, not back to us)
             socket.emit('message', { roomId: currentRoom, text });
             msgBox.value = '';
         };
@@ -569,7 +640,6 @@ app.get('/', (req: express.Request, res: express.Response) => {
         });
 
         socket.on('msg', ({ from, text }) => {
-            // Only show opponent messages (we already show our own immediately)
             addMessage('Opponent: ' + text, 'other');
         });
 
@@ -598,5 +668,5 @@ app.get('/', (req: express.Request, res: express.Response) => {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   logger.info(`🚀 Debate Omegle running on port ${PORT}`);
-  logger.info('✅ Fixed duplicate messages + improved UI!');
+  logger.info('✅ Updated with horizontal stat cards!');
 });
