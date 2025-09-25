@@ -40,13 +40,25 @@ app.use(express.static(path.join(__dirname, '../public')));
 // Also serve from current directory as fallback
 app.use(express.static(__dirname));
 
+// Type definitions
+interface WaitingUser {
+  socketId: string;
+  tags: string[];
+}
+
+interface ActiveRoom {
+  users: string[];
+  topic: string;
+  startTime: number;
+}
+
 // Simple in-memory storage for this deployment
-const waitingUsers = new Map();
-const activeRooms = new Map();
-const userRoomMap = new Map();
+const waitingUsers = new Map<string, WaitingUser>();
+const activeRooms = new Map<string, ActiveRoom>();
+const userRoomMap = new Map<string, string>();
 
 // Debate topics
-const DEBATE_TOPICS = [
+const DEBATE_TOPICS: string[] = [
   "Pineapple belongs on pizza",
   "Cats are better than dogs", 
   "Is a hotdog a sandwich?",
@@ -64,20 +76,20 @@ const DEBATE_TOPICS = [
   "Should robots have rights?"
 ];
 
-function getRandomTopic() {
+function getRandomTopic(): string {
   return DEBATE_TOPICS[Math.floor(Math.random() * DEBATE_TOPICS.length)];
 }
 
-function generateRoomId() {
+function generateRoomId(): string {
   return `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 }
 
-function findMatch(userId, userTags) {
+function findMatch(userId: string, userTags: string[]): string | null {
   for (const [waitingId, waitingData] of waitingUsers.entries()) {
     if (waitingId === userId) continue;
 
-    const hasCommonTags = userTags.some(tag =>
-      waitingData.tags.some(wtag =>
+    const hasCommonTags = userTags.some((tag: string) =>
+      waitingData.tags.some((wtag: string) =>
         wtag.toLowerCase() === tag.toLowerCase()
       )
     );
@@ -107,7 +119,7 @@ const io = new IOServer(server, {
 io.on('connection', (socket) => {
   logger.info(`User connected: ${socket.id}`);
 
-  socket.on('find', ({ tags = [] }) => {
+  socket.on('find', ({ tags = [] }: { tags?: string[] }) => {
     logger.info(`User ${socket.id} searching with tags: ${tags.join(', ')}`);
 
     if (userRoomMap.has(socket.id)) {
@@ -154,7 +166,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('message', ({ roomId, text }) => {
+  socket.on('message', ({ roomId, text }: { roomId: string; text: string }) => {
     if (!roomId || !activeRooms.has(roomId)) return;
     if (userRoomMap.get(socket.id) !== roomId) return;
 
@@ -179,7 +191,7 @@ io.on('connection', (socket) => {
     endRoom(roomId, 'User skipped');
   });
 
-  socket.on('end', ({ roomId }) => {
+  socket.on('end', ({ roomId }: { roomId: string }) => {
     if (!roomId || !activeRooms.has(roomId)) return;
     endRoom(roomId, 'User ended the debate');
   });
@@ -196,13 +208,13 @@ io.on('connection', (socket) => {
   });
 });
 
-function endRoom(roomId, reason) {
+function endRoom(roomId: string, reason: string): void {
   const room = activeRooms.get(roomId);
   if (!room) return;
 
   io.to(roomId).emit('room_ended', { reason });
 
-  room.users.forEach(userId => {
+  room.users.forEach((userId: string) => {
     userRoomMap.delete(userId);
     const userSocket = io.sockets.sockets.get(userId);
     if (userSocket) {
@@ -215,7 +227,7 @@ function endRoom(roomId, reason) {
 }
 
 // API endpoints
-app.get('/api/stats', (req, res) => {
+app.get('/api/stats', (req: express.Request, res: express.Response) => {
   res.json({
     activeRooms: activeRooms.size,
     waitingUsers: waitingUsers.size,
@@ -224,11 +236,11 @@ app.get('/api/stats', (req, res) => {
   });
 });
 
-app.get('/api/topics', (req, res) => {
+app.get('/api/topics', (req: express.Request, res: express.Response) => {
   res.json({ topics: DEBATE_TOPICS });
 });
 
-app.get('/health', (req, res) => {
+app.get('/health', (req: express.Request, res: express.Response) => {
   res.json({ 
     status: 'ok', 
     timestamp: new Date().toISOString(),
@@ -237,10 +249,10 @@ app.get('/health', (req, res) => {
 });
 
 // Root route that serves the main HTML file
-app.get('/', (req, res) => {
+app.get('/', (req: express.Request, res: express.Response) => {
   const indexPath = path.join(__dirname, 'index.html');
   logger.info(`Serving index from: ${indexPath}`);
-  res.sendFile(indexPath, (err) => {
+  res.sendFile(indexPath, (err?: Error) => {
     if (err) {
       logger.error('Error serving index.html:', err);
       res.status(404).send('<h1>Debate Omegle</h1><p>Frontend files not found. Please check deployment.</p>');
@@ -249,7 +261,7 @@ app.get('/', (req, res) => {
 });
 
 // Error handling middleware
-app.use((err, req, res, next) => {
+app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
   logger.error('Unhandled error:', err);
   res.status(500).json({ error: 'Internal server error' });
 });
