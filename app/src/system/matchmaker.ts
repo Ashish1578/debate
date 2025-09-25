@@ -1,5 +1,4 @@
 import { Server as IOServer, Socket } from 'socket.io';
-import Redis from 'ioredis';
 import { Logger } from 'pino';
 
 interface WaitingUser {
@@ -16,7 +15,6 @@ interface ActiveRoom {
 }
 
 export class Matchmaker {
-  private redis: Redis;
   private io: IOServer;
   private logger: Logger;
   private waitingUsers = new Map<string, WaitingUser>();
@@ -55,23 +53,7 @@ export class Matchmaker {
   constructor(io: IOServer, logger: Logger) {
     this.io = io;
     this.logger = logger;
-
-    // Initialize Redis connection with proper options
-    const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-    this.redis = new Redis(redisUrl, {
-      retryDelayOnClusterDown: 300,
-      retryDelayOnFailover: 100,
-      maxRetriesPerRequest: 3,
-      lazyConnect: true
-    });
-
-    this.redis.on('connect', () => {
-      this.logger.info('Connected to Redis');
-    });
-
-    this.redis.on('error', (err: Error) => {
-      this.logger.error('Redis error:', err);
-    });
+    this.logger.info('Matchmaker initialized in memory-only mode');
   }
 
   private getRandomTopic(): string {

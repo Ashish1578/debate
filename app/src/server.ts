@@ -120,6 +120,7 @@ const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   logger.info(`🚀 Debate Omegle server running on port ${PORT}`);
   logger.info(`Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info('Running in memory-only mode (no Redis)');
 });
 
 // Graceful shutdown
