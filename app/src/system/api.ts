@@ -1,18 +1,22 @@
 import express from 'express';
-import { Matchmaker } from './matchmaker';
 import { Logger } from 'pino';
 
-export function setupAPI(app: express.Application, matchmaker: Matchmaker, logger: Logger): void {
+// Simple stats interface for memory-only mode
+interface SimpleStats {
+  activeRooms: number;
+  waitingUsers: number;
+  totalConnections: number;
+  timestamp: string;
+  uptime: number;
+}
+
+export function setupAPI(app: express.Application, getStats: () => SimpleStats, getTopics: () => string[], logger: Logger): void {
 
   // Stats endpoint for monitoring
-  app.get('/api/stats', (req, res) => {
+  app.get('/api/stats', (req: express.Request, res: express.Response) => {
     try {
-      const stats = matchmaker.getStats();
-      res.json({
-        ...stats,
-        timestamp: new Date().toISOString(),
-        uptime: process.uptime()
-      });
+      const stats = getStats();
+      res.json(stats);
     } catch (error) {
       logger.error('Error getting stats:', error);
       res.status(500).json({ error: 'Failed to get stats' });
@@ -20,9 +24,9 @@ export function setupAPI(app: express.Application, matchmaker: Matchmaker, logge
   });
 
   // Get available topics
-  app.get('/api/topics', (req, res) => {
+  app.get('/api/topics', (req: express.Request, res: express.Response) => {
     try {
-      const topics = matchmaker.getTopics();
+      const topics = getTopics();
       res.json({ 
         topics,
         count: topics.length 
@@ -34,30 +38,32 @@ export function setupAPI(app: express.Application, matchmaker: Matchmaker, logge
   });
 
   // Health check with detailed info
-  app.get('/api/health', (req, res) => {
+  app.get('/api/health', (req: express.Request, res: express.Response) => {
     const health = {
       status: 'healthy',
       timestamp: new Date().toISOString(),
       uptime: process.uptime(),
       memory: process.memoryUsage(),
       version: process.version,
-      environment: process.env.NODE_ENV || 'development'
+      environment: process.env.NODE_ENV || 'development',
+      mode: 'memory-only'
     };
 
     res.json(health);
   });
 
   // Rate limiting info
-  app.get('/api/limits', (req, res) => {
+  app.get('/api/limits', (req: express.Request, res: express.Response) => {
     res.json({
       maxConnectionsPerIP: parseInt(process.env.MAX_CONNECTIONS_PER_IP || '10'),
       roomDurationMinutes: parseInt(process.env.ROOM_DURATION_MINUTES || '5'),
-      maxMessageLength: 500
+      maxMessageLength: 500,
+      mode: 'memory-only'
     });
   });
 
   // Error handling for API routes
-  app.use('/api/*', (req, res) => {
+  app.use('/api/*', (req: express.Request, res: express.Response) => {
     res.status(404).json({ error: 'API endpoint not found' });
   });
 }

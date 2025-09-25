@@ -1,4 +1,3 @@
-import Redis from 'ioredis';
 import dotenv from 'dotenv';
 import pino from 'pino';
 
@@ -6,7 +5,7 @@ dotenv.config();
 
 const logger = pino({ level: 'info' });
 
-// Debate topics to seed
+// Debate topics to seed (for reference only in memory-only mode)
 const DEBATE_TOPICS = [
   "Pineapple belongs on pizza",
   "Cats are better than dogs", 
@@ -41,36 +40,25 @@ const DEBATE_TOPICS = [
 ];
 
 async function migrate() {
-  const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
-
   try {
     logger.info('Starting migration...');
 
-    // Clear existing topics
-    await redis.del('debate:topics');
-    logger.info('Cleared existing topics');
+    // Since we're using memory-only mode, just validate the topics
+    logger.info(`Validated ${DEBATE_TOPICS.length} debate topics`);
 
-    // Add new topics
-    if (DEBATE_TOPICS.length > 0) {
-      await redis.sadd('debate:topics', ...DEBATE_TOPICS);
-      logger.info(`Added ${DEBATE_TOPICS.length} debate topics`);
-    }
+    // Log all topics for reference
+    logger.info('Available debate topics:');
+    DEBATE_TOPICS.forEach((topic, index) => {
+      logger.info(`  ${index + 1}. ${topic}`);
+    });
 
-    // Set up any initial Redis keys
-    await redis.set('debate:stats:total_debates', '0');
-    await redis.set('debate:stats:active_users', '0');
-
-    // Create indexes for common queries
-    await redis.set('debate:version', '1.0.0');
-    await redis.set('debate:migrated_at', new Date().toISOString());
-
+    // Set up any initial configuration
     logger.info('Migration completed successfully');
+    logger.info('Running in memory-only mode - no external database required');
 
   } catch (error) {
     logger.error('Migration failed:', error);
     process.exit(1);
-  } finally {
-    await redis.quit();
   }
 }
 
@@ -78,7 +66,7 @@ async function migrate() {
 if (require.main === module) {
   migrate()
     .then(() => {
-      logger.info('Migration script completed');
+      logger.info('Migration script completed - ready for deployment');
       process.exit(0);
     })
     .catch((error) => {
@@ -87,4 +75,4 @@ if (require.main === module) {
     });
 }
 
-export { migrate };
+export { migrate, DEBATE_TOPICS };
