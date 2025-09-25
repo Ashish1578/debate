@@ -1,38 +1,201 @@
+* {
+    box-sizing: border-box;
+}
 
 body {
-font-family: Arial, sans-serif;
-background: #111;
-color: #eee;
-display: flex;
-justify-content: center;
-align-items: center;
-height: 100vh;
-margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: linear-gradient(135deg, #0f0f0f, #1a1a1a);
+    color: #eee;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    margin: 0;
+    padding: 10px;
 }
+
 #app {
-width: 100%;
-max-width: 600px;
-background: #1c1c1c;
-padding: 20px;
-border-radius: 12px;
-box-shadow: 0 0 20px rgba(0,0,0,0.5);
+    width: 100%;
+    max-width: 650px;
+    background: #1c1c1c;
+    padding: 25px;
+    border-radius: 15px;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.7);
+    border: 1px solid #333;
 }
-h1 { text-align: center; }
+
+h1 { 
+    text-align: center; 
+    margin: 0 0 10px 0;
+    color: #fff;
+    font-size: 2.2em;
+}
+
 #controls, #inputArea {
-display: flex;
-gap: 10px;
-margin: 10px 0;
+    display: flex;
+    gap: 10px;
+    margin: 15px 0;
+    flex-wrap: wrap;
 }
+
+#controls input, #inputArea input {
+    flex: 1;
+    min-width: 200px;
+}
+
+input[type="text"] {
+    padding: 12px;
+    border: 1px solid #444;
+    border-radius: 8px;
+    background: #2a2a2a;
+    color: #eee;
+    font-size: 14px;
+}
+
+input[type="text"]:focus {
+    outline: none;
+    border-color: #4db6ff;
+    background: #333;
+}
+
+button {
+    padding: 12px 18px;
+    border: none;
+    border-radius: 8px;
+    background: #4db6ff;
+    color: white;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 14px;
+    transition: all 0.2s ease;
+}
+
+button:hover:not(:disabled) {
+    background: #3da8ef;
+    transform: translateY(-1px);
+}
+
+button:disabled {
+    background: #555;
+    color: #999;
+    cursor: not-allowed;
+    transform: none;
+}
+
+#skipBtn {
+    background: #ff9500;
+}
+
+#skipBtn:hover:not(:disabled) {
+    background: #e6850e;
+}
+
+#endBtn {
+    background: #ff4757;
+}
+
+#endBtn:hover:not(:disabled) {
+    background: #e73c4e;
+}
+
 #chat {
-background: #222;
-padding: 10px;
-height: 300px;
-overflow-y: auto;
-border-radius: 8px;
-margin-bottom: 10px;
+    background: #222;
+    padding: 15px;
+    height: 350px;
+    overflow-y: auto;
+    border-radius: 10px;
+    margin-bottom: 15px;
+    border: 1px solid #333;
+    font-family: monospace;
+    line-height: 1.4;
 }
-.msg { margin: 5px 0; }
-.msg.me { color: #4db6ff; }
-.msg.other { color: #ff7a7a; }
-.msg.system { color: #aaa; font-style: italic; }
-#topic { text-align: center; margin: 10px 0; font-weight: bold; }
+
+.msg { 
+    margin: 8px 0;
+    padding: 6px 10px;
+    border-radius: 6px;
+    word-wrap: break-word;
+}
+
+.msg.me { 
+    color: #4db6ff;
+    background: rgba(77, 182, 255, 0.1);
+    border-left: 3px solid #4db6ff;
+}
+
+.msg.other { 
+    color: #ff7a7a;
+    background: rgba(255, 122, 122, 0.1);
+    border-left: 3px solid #ff7a7a;
+}
+
+.msg.system { 
+    color: #aaa; 
+    font-style: italic;
+    text-align: center;
+    background: rgba(170, 170, 170, 0.05);
+    border-radius: 20px;
+}
+
+#topic { 
+    text-align: center; 
+    margin: 15px 0; 
+    font-weight: bold;
+    font-size: 1.1em;
+    color: #4db6ff;
+    padding: 12px;
+    background: rgba(77, 182, 255, 0.1);
+    border-radius: 8px;
+    border: 1px solid rgba(77, 182, 255, 0.3);
+}
+
+#chat::-webkit-scrollbar {
+    width: 8px;
+}
+
+#chat::-webkit-scrollbar-track {
+    background: #1a1a1a;
+    border-radius: 4px;
+}
+
+#chat::-webkit-scrollbar-thumb {
+    background: #555;
+    border-radius: 4px;
+}
+
+#chat::-webkit-scrollbar-thumb:hover {
+    background: #666;
+}
+
+@media (max-width: 600px) {
+    #controls, #inputArea {
+        flex-direction: column;
+    }
+
+    #controls input, #inputArea input {
+        min-width: unset;
+    }
+
+    #app {
+        padding: 15px;
+        margin: 5px;
+    }
+
+    h1 {
+        font-size: 1.8em;
+    }
+
+    #chat {
+        height: 300px;
+    }
+}
+
+/* Loading animation */
+@keyframes pulse {
+    0%, 100% { opacity: 0.6; }
+    50% { opacity: 1; }
+}
+
+.loading {
+    animation: pulse 2s infinite;
+}
