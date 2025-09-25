@@ -1,0 +1,38 @@
+
+body {
+font-family: Arial, sans-serif;
+background: #111;
+color: #eee;
+display: flex;
+justify-content: center;
+align-items: center;
+height: 100vh;
+margin: 0;
+}
+#app {
+width: 100%;
+max-width: 600px;
+background: #1c1c1c;
+padding: 20px;
+border-radius: 12px;
+box-shadow: 0 0 20px rgba(0,0,0,0.5);
+}
+h1 { text-align: center; }
+#controls, #inputArea {
+display: flex;
+gap: 10px;
+margin: 10px 0;
+}
+#chat {
+background: #222;
+padding: 10px;
+height: 300px;
+overflow-y: auto;
+border-radius: 8px;
+margin-bottom: 10px;
+}
+.msg { margin: 5px 0; }
+.msg.me { color: #4db6ff; }
+.msg.other { color: #ff7a7a; }
+.msg.system { color: #aaa; font-style: italic; }
+#topic { text-align: center; margin: 10px 0; font-weight: bold; }

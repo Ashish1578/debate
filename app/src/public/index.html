@@ -1,0 +1,36 @@
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Debate Omegle</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app">
+<h1>🎤 Debate Omegle</h1>
+<div id="controls">
+<input id="tags" type="text" placeholder="Enter interests (comma separated)" />
+<button id="startBtn">Start Debate</button>
+<button id="skipBtn" disabled>Skip</button>
+<button id="endBtn" disabled>End</button>
+</div>
+
+
+<div id="topic"></div>
+<div id="chat"></div>
+
+
+<div id="inputArea">
+<input id="msgBox" type="text" placeholder="Type your message..." disabled />
+<button id="sendBtn" disabled>Send</button>
+</div>
+</div>
+
+
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+<script src="client.js"></script>
+</body>
+</html>
+```
