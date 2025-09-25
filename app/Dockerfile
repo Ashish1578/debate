@@ -1,19 +1,27 @@
-FROM node:18-alpine
+dockerfile_content = '''FROM node:18-alpine
+
+# Install TypeScript globally
+RUN npm install -g typescript ts-node
 
 WORKDIR /app
 
 # Copy package files
 COPY package*.json ./
+COPY tsconfig.json ./
+
+# Install dependencies
 RUN npm ci --only=production
 
 # Copy source code
-COPY . .
+COPY src/ ./src/
+COPY .env ./
 
-# Build TypeScript
+# Build the TypeScript code
 RUN npm run build
 
-# Expose port
+# Expose the port
 EXPOSE 3000
 
-# Start server
+# Start the application
 CMD ["npm", "start"]
+'''
