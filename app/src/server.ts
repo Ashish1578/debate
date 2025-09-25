@@ -56,7 +56,7 @@ io.on('connection', (socket) => {
 
   socket.on('find', async ({ tags = [] }) => {
     try {
-      await matchmaker.findMatch(socket, tags);
+      await matchmaker.handleFindMatch(socket, tags);
     } catch (error) {
       logger.error('Error finding match:', error);
       socket.emit('system', 'Error finding match. Please try again.');

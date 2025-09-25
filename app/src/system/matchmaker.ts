@@ -56,10 +56,11 @@ export class Matchmaker {
     this.io = io;
     this.logger = logger;
 
-    // Initialize Redis connection
+    // Initialize Redis connection with proper options
     const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
     this.redis = new Redis(redisUrl, {
-      retryDelayOnFailure: (times) => Math.min(times * 50, 2000),
+      retryDelayOnClusterDown: 300,
+      retryDelayOnFailover: 100,
       maxRetriesPerRequest: 3,
       lazyConnect: true
     });
@@ -68,7 +69,7 @@ export class Matchmaker {
       this.logger.info('Connected to Redis');
     });
 
-    this.redis.on('error', (err) => {
+    this.redis.on('error', (err: Error) => {
       this.logger.error('Redis error:', err);
     });
   }
@@ -81,7 +82,7 @@ export class Matchmaker {
     return `room_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
-  private findMatch(userId: string, userTags: string[]): string | null {
+  private findMatchingUser(userId: string, userTags: string[]): string | null {
     for (const [waitingId, waitingData] of this.waitingUsers.entries()) {
       if (waitingId === userId) continue;
 
@@ -105,7 +106,7 @@ export class Matchmaker {
     return null;
   }
 
-  async findMatch(socket: Socket, tags: string[] = []): Promise<void> {
+  async handleFindMatch(socket: Socket, tags: string[] = []): Promise<void> {
     const userId = socket.id;
     this.logger.info(`User ${userId} searching with tags: ${tags.join(', ')}`);
 
@@ -116,7 +117,7 @@ export class Matchmaker {
     }
 
     // Try to find a match
-    const matchId = this.findMatch(userId, tags);
+    const matchId = this.findMatchingUser(userId, tags);
 
     if (matchId) {
       // Create room and match users
